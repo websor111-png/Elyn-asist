@@ -1,90 +1,150 @@
-import * as Speech from 'expo-speech';
+import { Audio } from 'expo-av';
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import axios from 'axios';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
 interface SpeakOptions {
   language?: string;
-  pitch?: number;
-  rate?: number;
   voiceType?: 'female' | 'male';
+  speed?: number;
 }
 
-const languageVoiceMap: { [key: string]: { ios: string; android: string } } = {
-  ro: { ios: 'ro-RO', android: 'ro-RO' },
-  en: { ios: 'en-US', android: 'en-US' },
-  de: { ios: 'de-DE', android: 'de-DE' },
-  fr: { ios: 'fr-FR', android: 'fr-FR' },
-  es: { ios: 'es-ES', android: 'es-ES' },
-  it: { ios: 'it-IT', android: 'it-IT' },
-};
-
-class VoiceService {
+class RealisticVoiceService {
+  private sound: Audio.Sound | null = null;
   private isSpeaking: boolean = false;
-  private speakQueue: string[] = [];
+  private speakQueue: Array<{ text: string; options: SpeakOptions }> = [];
+  private isProcessingQueue: boolean = false;
 
   async speak(text: string, options: SpeakOptions = {}): Promise<void> {
-    const { language = 'ro', pitch = 1.0, rate = 0.9, voiceType = 'female' } = options;
+    const { voiceType = 'female', speed = 1.0 } = options;
+    
+    // Add to queue
+    this.speakQueue.push({ text, options });
+    
+    // Process queue if not already processing
+    if (!this.isProcessingQueue) {
+      await this.processQueue();
+    }
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.speakQueue.length === 0) {
+      this.isProcessingQueue = false;
+      return;
+    }
+
+    this.isProcessingQueue = true;
+    const { text, options } = this.speakQueue.shift()!;
+    
+    try {
+      await this.speakNow(text, options);
+    } catch (error) {
+      console.error('Error speaking:', error);
+    }
+    
+    // Process next in queue
+    await this.processQueue();
+  }
+
+  private async speakNow(text: string, options: SpeakOptions = {}): Promise<void> {
+    const { voiceType = 'female', speed = 1.0 } = options;
     
     // Stop any current speech
     await this.stop();
     
-    // Check if Speech is available
-    const isSpeechAvailable = await Speech.isSpeakingAsync().catch(() => false);
-    
-    const voiceConfig = languageVoiceMap[language] || languageVoiceMap['en'];
-    const voiceLang = Platform.OS === 'ios' ? voiceConfig.ios : voiceConfig.android;
-    
-    // Adjust pitch for male/female voice effect
-    const adjustedPitch = voiceType === 'male' ? 0.85 : 1.1;
-    
-    return new Promise((resolve, reject) => {
+    try {
       this.isSpeaking = true;
       
-      try {
-        Speech.speak(text, {
-          language: voiceLang,
-          pitch: adjustedPitch,
-          rate: rate,
-          onDone: () => {
-            this.isSpeaking = false;
-            resolve();
-          },
-          onError: (error) => {
-            this.isSpeaking = false;
-            console.log('Speech error:', error);
-            resolve(); // Resolve anyway to not block the app
-          },
-          onStopped: () => {
-            this.isSpeaking = false;
-            resolve();
-          },
-        });
-      } catch (error) {
-        console.log('Speech not available:', error);
-        this.isSpeaking = false;
-        resolve();
-      }
-    });
-  }
+      // Call backend to generate realistic speech
+      const response = await axios.post(`${BACKEND_URL}/api/speech/synthesize`, {
+        text,
+        voice_type: voiceType,
+        speed
+      }, {
+        timeout: 30000
+      });
 
-  async stop(): Promise<void> {
-    if (this.isSpeaking) {
-      await Speech.stop();
+      if (response.data?.audio_base64) {
+        // Create a temporary file for the audio
+        const audioUri = FileSystem.cacheDirectory + `speech_${Date.now()}.mp3`;
+        
+        // Write base64 audio to file
+        await FileSystem.writeAsStringAsync(audioUri, response.data.audio_base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        // Configure audio mode
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+        });
+
+        // Load and play the sound
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: audioUri },
+          { shouldPlay: true }
+        );
+
+        this.sound = sound;
+
+        // Wait for playback to finish
+        await new Promise<void>((resolve) => {
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if (status.isLoaded && status.didJustFinish) {
+              resolve();
+            }
+          });
+        });
+
+        // Cleanup
+        await sound.unloadAsync();
+        this.sound = null;
+        
+        // Delete temp file
+        try {
+          await FileSystem.deleteAsync(audioUri, { idempotent: true });
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+    } catch (error) {
+      console.error('Error in TTS:', error);
+      // Fallback: just log the error, don't crash
+    } finally {
       this.isSpeaking = false;
     }
   }
 
+  async stop(): Promise<void> {
+    // Clear the queue
+    this.speakQueue = [];
+    
+    if (this.sound) {
+      try {
+        await this.sound.stopAsync();
+        await this.sound.unloadAsync();
+      } catch (e) {
+        // Ignore errors during stop
+      }
+      this.sound = null;
+    }
+    this.isSpeaking = false;
+  }
+
   async speakGreeting(voiceName: string, voiceType: 'female' | 'male', language: string = 'ro'): Promise<void> {
     const greetings: { [key: string]: string } = {
-      ro: `Bună! Eu sunt ${voiceName}, asistentul tău vocal. Spune-mi ce pot face pentru tine.`,
-      en: `Hello! I am ${voiceName}, your voice assistant. Tell me what I can do for you.`,
-      de: `Hallo! Ich bin ${voiceName}, dein Sprachassistent. Sag mir, was ich für dich tun kann.`,
-      fr: `Bonjour! Je suis ${voiceName}, ton assistant vocal. Dis-moi ce que je peux faire pour toi.`,
-      es: `¡Hola! Soy ${voiceName}, tu asistente de voz. Dime qué puedo hacer por ti.`,
-      it: `Ciao! Sono ${voiceName}, il tuo assistente vocale. Dimmi cosa posso fare per te.`,
+      ro: `Bună! Eu sunt ${voiceName}, asistentul tău vocal. Spune numele meu oricând ai nevoie de ajutor. De exemplu: ${voiceName}, ce oră este?`,
+      en: `Hello! I am ${voiceName}, your voice assistant. Say my name whenever you need help. For example: ${voiceName}, what time is it?`,
+      de: `Hallo! Ich bin ${voiceName}, dein Sprachassistent. Sag meinen Namen, wenn du Hilfe brauchst.`,
+      fr: `Bonjour! Je suis ${voiceName}, ton assistant vocal. Dis mon nom quand tu as besoin d'aide.`,
+      es: `¡Hola! Soy ${voiceName}, tu asistente de voz. Di mi nombre cuando necesites ayuda.`,
+      it: `Ciao! Sono ${voiceName}, il tuo assistente vocale. Pronuncia il mio nome quando hai bisogno di aiuto.`,
     };
     
     const greeting = greetings[language] || greetings['ro'];
-    await this.speak(greeting, { language, voiceType });
+    await this.speak(greeting, { voiceType });
   }
 
   async speakTime(voiceType: 'female' | 'male', language: string = 'ro'): Promise<void> {
@@ -93,7 +153,7 @@ class VoiceService {
     const minutes = now.getMinutes();
     
     const timeTexts: { [key: string]: string } = {
-      ro: `Este ora ${hours} și ${minutes} minute.`,
+      ro: `Este ora ${hours} și ${minutes} ${minutes === 1 ? 'minut' : 'minute'}.`,
       en: `It's ${hours}:${minutes.toString().padStart(2, '0')}.`,
       de: `Es ist ${hours} Uhr ${minutes}.`,
       fr: `Il est ${hours} heures ${minutes}.`,
@@ -102,21 +162,21 @@ class VoiceService {
     };
     
     const timeText = timeTexts[language] || timeTexts['ro'];
-    await this.speak(timeText, { language, voiceType });
+    await this.speak(timeText, { voiceType });
   }
 
   async speakFindPhone(voiceName: string, voiceType: 'female' | 'male', language: string = 'ro'): Promise<void> {
     const findTexts: { [key: string]: string } = {
-      ro: `Sunt aici! Sunt ${voiceName}! Mă auzi? Sunt lângă tine!`,
-      en: `I'm here! I'm ${voiceName}! Can you hear me? I'm near you!`,
-      de: `Ich bin hier! Ich bin ${voiceName}! Kannst du mich hören? Ich bin in deiner Nähe!`,
-      fr: `Je suis ici! Je suis ${voiceName}! Tu m'entends? Je suis près de toi!`,
-      es: `¡Estoy aquí! ¡Soy ${voiceName}! ¿Me escuchas? ¡Estoy cerca de ti!`,
-      it: `Sono qui! Sono ${voiceName}! Mi senti? Sono vicino a te!`,
+      ro: `Sunt aici! Sunt ${voiceName}! Mă auzi? Sunt lângă tine! Continuă să asculți vocea mea!`,
+      en: `I'm here! I'm ${voiceName}! Can you hear me? I'm near you! Follow my voice!`,
+      de: `Ich bin hier! Ich bin ${voiceName}! Kannst du mich hören? Folge meiner Stimme!`,
+      fr: `Je suis ici! Je suis ${voiceName}! Tu m'entends? Suis ma voix!`,
+      es: `¡Estoy aquí! ¡Soy ${voiceName}! ¿Me escuchas? ¡Sigue mi voz!`,
+      it: `Sono qui! Sono ${voiceName}! Mi senti? Segui la mia voce!`,
     };
     
     const findText = findTexts[language] || findTexts['ro'];
-    await this.speak(findText, { language, voiceType, rate: 1.0 });
+    await this.speak(findText, { voiceType });
   }
 
   getIsSpeaking(): boolean {
@@ -124,5 +184,5 @@ class VoiceService {
   }
 }
 
-export const voiceService = new VoiceService();
+export const voiceService = new RealisticVoiceService();
 export default voiceService;

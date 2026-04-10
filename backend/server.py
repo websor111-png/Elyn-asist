@@ -140,8 +140,51 @@ class SpeechToTextResponse(BaseModel):
     detected_language: str
     confidence: float
 
+# Text-to-Speech Model
+class TextToSpeechRequest(BaseModel):
+    text: str
+    voice_type: str = "female"  # "female" for Ely (nova), "male" for Elyn (onyx)
+    speed: float = 1.0
+
 # ===== AI INTEGRATION =====
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+
+async def generate_speech(text: str, voice_type: str = "female", speed: float = 1.0) -> bytes:
+    """Generate realistic speech using Microsoft Edge TTS (free, realistic voices)"""
+    try:
+        import edge_tts
+        import asyncio
+        
+        # Map voice type to Edge TTS voice
+        # Romanian voices:
+        # - ro-RO-AlinaNeural (female) - warm, natural
+        # - ro-RO-EmilNeural (male) - deep, natural
+        # English backup:
+        # - en-US-AriaNeural (female)
+        # - en-US-GuyNeural (male)
+        
+        if voice_type == "female":
+            voice = "ro-RO-AlinaNeural"  # Natural Romanian female voice (Ely)
+        else:
+            voice = "ro-RO-EmilNeural"  # Natural Romanian male voice (Elyn)
+        
+        # Adjust rate (edge-tts uses percentage format like "+0%" or "-10%")
+        rate_str = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
+        
+        # Generate speech
+        communicate = edge_tts.Communicate(text, voice, rate=rate_str)
+        
+        # Collect audio data
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
+        
+        return audio_data if audio_data else None
+                
+    except Exception as e:
+        logger.error(f"Error generating speech with edge-tts: {e}")
+        return None
 
 async def transcribe_audio(audio_base64: str, language: str = None) -> dict:
     """Transcribe audio using OpenAI Whisper API"""
@@ -460,6 +503,32 @@ async def transcribe_and_process(request: SpeechToTextRequest):
             "action_data": command_result.get("action_data")
         }
     }
+
+# ===== TEXT-TO-SPEECH API =====
+
+from fastapi.responses import Response
+
+@api_router.post("/speech/synthesize")
+async def synthesize_speech(request: TextToSpeechRequest):
+    """Generate realistic speech using OpenAI TTS"""
+    audio_bytes = await generate_speech(request.text, request.voice_type, request.speed)
+    
+    if audio_bytes is None:
+        raise HTTPException(status_code=500, detail="Failed to generate speech")
+    
+    # Return audio as base64 for easy frontend consumption
+    audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+    return {"audio_base64": audio_base64, "format": "mp3"}
+
+@api_router.post("/speech/synthesize-raw")
+async def synthesize_speech_raw(request: TextToSpeechRequest):
+    """Generate realistic speech and return raw audio file"""
+    audio_bytes = await generate_speech(request.text, request.voice_type, request.speed)
+    
+    if audio_bytes is None:
+        raise HTTPException(status_code=500, detail="Failed to generate speech")
+    
+    return Response(content=audio_bytes, media_type="audio/mpeg")
 
 # ===== CONTACTS API =====
 
