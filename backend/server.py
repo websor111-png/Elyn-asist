@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -10,6 +10,8 @@ from typing import List, Optional
 import uuid
 from datetime import datetime
 import base64
+import tempfile
+import httpx
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -128,8 +130,77 @@ class SMSSend(BaseModel):
     phone_number: Optional[str] = None
     message: str
 
+# Speech-to-Text Model
+class SpeechToTextRequest(BaseModel):
+    audio_base64: str
+    language: Optional[str] = None  # If None, auto-detect
+
+class SpeechToTextResponse(BaseModel):
+    text: str
+    detected_language: str
+    confidence: float
+
 # ===== AI INTEGRATION =====
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+
+async def transcribe_audio(audio_base64: str, language: str = None) -> dict:
+    """Transcribe audio using OpenAI Whisper API"""
+    try:
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        if not api_key:
+            raise HTTPException(status_code=500, detail="AI API key not configured")
+        
+        # Decode base64 audio
+        audio_bytes = base64.b64decode(audio_base64)
+        
+        # Create temp file for audio
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_file.write(audio_bytes)
+            temp_path = temp_file.name
+        
+        try:
+            # Call OpenAI Whisper API
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                with open(temp_path, 'rb') as audio_file:
+                    files = {'file': ('audio.wav', audio_file, 'audio/wav')}
+                    data = {'model': 'whisper-1'}
+                    if language:
+                        data['language'] = language
+                    
+                    response = await client.post(
+                        'https://api.openai.com/v1/audio/transcriptions',
+                        headers={'Authorization': f'Bearer {api_key}'},
+                        files=files,
+                        data=data
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        return {
+                            'text': result.get('text', ''),
+                            'detected_language': language or 'auto',
+                            'confidence': 1.0
+                        }
+                    else:
+                        logger.error(f"Whisper API error: {response.text}")
+                        return {
+                            'text': '',
+                            'detected_language': 'unknown',
+                            'confidence': 0.0,
+                            'error': response.text
+                        }
+        finally:
+            # Clean up temp file
+            os.unlink(temp_path)
+            
+    except Exception as e:
+        logger.error(f"Error transcribing audio: {e}")
+        return {
+            'text': '',
+            'detected_language': 'unknown',
+            'confidence': 0.0,
+            'error': str(e)
+        }
 
 async def process_voice_command(text: str, language: str = None, contacts: list = None) -> dict:
     """Process voice command using AI"""
@@ -297,7 +368,7 @@ IMPORTANT:
 
 @api_router.get("/")
 async def root():
-    return {"message": "Ely/Elyn Voice Assistant API", "version": "2.0.0", "brand": "Brend Ekyn", "creator": "Creiat de Ciorpac Sorin"}
+    return {"message": "Ely/Elyn Voice Assistant API", "version": "2.0.0", "brand": "Brend Elyn", "creator": "Creiat de Ciorpac Sorin"}
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
@@ -339,6 +410,56 @@ async def analyze_image(request: ImageAnalysisRequest):
         guidance=result.get("guidance", ""),
         medication_location=result.get("medication_location")
     )
+
+# ===== SPEECH-TO-TEXT API =====
+
+@api_router.post("/speech/transcribe", response_model=SpeechToTextResponse)
+async def transcribe_speech(request: SpeechToTextRequest):
+    """Transcribe audio to text using OpenAI Whisper"""
+    result = await transcribe_audio(request.audio_base64, request.language)
+    if 'error' in result:
+        raise HTTPException(status_code=500, detail=result['error'])
+    return SpeechToTextResponse(
+        text=result.get("text", ""),
+        detected_language=result.get("detected_language", "unknown"),
+        confidence=result.get("confidence", 0.0)
+    )
+
+@api_router.post("/speech/transcribe-and-process")
+async def transcribe_and_process(request: SpeechToTextRequest):
+    """Transcribe audio and immediately process as voice command"""
+    # First transcribe
+    transcription = await transcribe_audio(request.audio_base64, request.language)
+    if 'error' in transcription or not transcription.get('text'):
+        return {
+            "transcription": transcription,
+            "command_response": None,
+            "error": "Failed to transcribe audio"
+        }
+    
+    # Then process as voice command
+    contacts = await db.contacts.find().to_list(100)
+    contacts_list = [{"name": c["name"], "phone_number": c["phone_number"]} for c in contacts]
+    
+    command_result = await process_voice_command(
+        transcription['text'], 
+        transcription.get('detected_language'),
+        contacts_list
+    )
+    
+    return {
+        "transcription": {
+            "text": transcription['text'],
+            "detected_language": transcription.get('detected_language', 'auto'),
+            "confidence": transcription.get('confidence', 1.0)
+        },
+        "command_response": {
+            "response_text": command_result.get("response_text", ""),
+            "detected_language": command_result.get("detected_language", "ro"),
+            "action_type": command_result.get("action_type", "unknown"),
+            "action_data": command_result.get("action_data")
+        }
+    }
 
 # ===== CONTACTS API =====
 
@@ -512,7 +633,7 @@ async def get_greeting():
         "voice_name": voice_name,
         "voice_type": settings.voice_type,
         "language": settings.preferred_language,
-        "brand": "Brend Ekyn",
+        "brand": "Brend Elyn",
         "creator": "Creiat de Ciorpac Sorin"
     }
 
@@ -521,10 +642,10 @@ async def get_greeting():
 async def get_brand_info():
     """Get brand information"""
     return {
-        "brand_name": "Brend Ekyn",
+        "brand_name": "Brend Elyn",
         "creator": "Creiat de Ciorpac Sorin",
         "version": "2.0.0",
-        "app_name": "Ekyn Voice Assistant"
+        "app_name": "Elyn Voice Assistant"
     }
 
 # Include the router in the main app

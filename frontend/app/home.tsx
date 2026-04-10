@@ -348,7 +348,7 @@ export default function HomeScreen() {
 
       {/* Brand Footer */}
       <View style={styles.footer}>
-        <Text style={styles.footerBrand}>Brend Ekyn</Text>
+        <Text style={styles.footerBrand}>Brend Elyn</Text>
       </View>
     </SafeAreaView>
   );

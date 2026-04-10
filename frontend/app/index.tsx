@@ -42,7 +42,7 @@ export default function SplashScreen() {
         </View>
         
         <View style={styles.brandContainer}>
-          <Text style={styles.brandName}>Brend Ekyn</Text>
+          <Text style={styles.brandName}>Brend Elyn</Text>
           <Text style={styles.creator}>Creiat de Ciorpac Sorin</Text>
         </View>
       </Animated.View>

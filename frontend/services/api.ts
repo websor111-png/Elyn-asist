@@ -131,6 +131,37 @@ export const smsApi = {
   },
 };
 
+// Speech-to-Text API
+export interface TranscriptionResult {
+  text: string;
+  detected_language: string;
+  confidence: number;
+}
+
+export interface TranscribeAndProcessResult {
+  transcription: TranscriptionResult;
+  command_response: VoiceCommandResponse | null;
+  error?: string;
+}
+
+export const speechApi = {
+  transcribe: async (audioBase64: string, language?: string): Promise<TranscriptionResult> => {
+    const response = await api.post('/speech/transcribe', { 
+      audio_base64: audioBase64, 
+      language 
+    });
+    return response.data;
+  },
+  
+  transcribeAndProcess: async (audioBase64: string, language?: string): Promise<TranscribeAndProcessResult> => {
+    const response = await api.post('/speech/transcribe-and-process', { 
+      audio_base64: audioBase64, 
+      language 
+    });
+    return response.data;
+  },
+};
+
 export const settingsApi = {
   getSettings: async () => {
     const response = await api.get('/settings');

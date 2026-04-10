@@ -1,16 +1,23 @@
-# Ekyn Voice Assistant v2.0 - Brend Ekyn
+# Elyn Voice Assistant v2.1 - Brend Elyn
 ## Creiat de Ciorpac Sorin
 
 ## Descriere
-Aplicație completă de accesibilitate cu AI pentru persoane nevăzătoare, cu control vocal total al telefonului.
+Aplicație completă de accesibilitate cu AI pentru persoane nevăzătoare, cu control vocal total al telefonului și recunoaștere vocală reală.
 
-## Funcționalități Implementate v2.0
+## Funcționalități Implementate v2.1
 
-### 1. Branding
-- **Splash Screen**: "E" mare pe fundal albastru cu "Brend Ekyn" și "Creiat de Ciorpac Sorin"
+### 1. Branding (CORECTAT)
+- **Splash Screen**: "E" mare pe fundal albastru cu **"Brend Elyn"** și "Creiat de Ciorpac Sorin"
 - **Avatar**: Litera "E" în interfață
+- **Footer**: "Brend Elyn"
 
-### 2. Asistent Vocal AI
+### 2. RECUNOAȘTERE VOCALĂ REALĂ (NOU!)
+- **OpenAI Whisper API** - Transcrierea vocii în text
+- **Detectare automată a limbii** - Recunoaște română, engleză, germană, franceză, spaniolă, italiană
+- **Ține apăsat pentru a vorbi** - Înregistrează vocea și o procesează
+- **Transcriere + Procesare** - Un singur request care transcrie și procesează comanda
+
+### 3. Asistent Vocal AI
 - **Comenzi vocale multi-limbă**: Detectare automată (RO, EN, DE, FR, ES, IT)
 - **Răspuns în aceeași limbă**: AI răspunde în limba în care a fost întrebat
 - **Acțiuni suportate**:
@@ -24,69 +31,49 @@ Aplicație completă de accesibilitate cu AI pentru persoane nevăzătoare, cu c
   - Verificare baterie
   - Căutare telefon
 
-### 3. Ghidare Vizuală cu Cameră
+### 4. Ghidare Vizuală cu Cameră
 - Recunoaștere obiecte prin AI Vision
 - Detectare obstacole
 - Ghidare audio pentru navigare
 - Memorare locație medicamente
 - Suport cameră frontală/spate
 
-### 4. Voce Personalizabilă
+### 5. Voce Personalizabilă
 - **Ely** - Voce feminină
 - **Elyn** - Voce masculină
 - Salut personalizat
 
-### 5. Funcție "Găsește Telefonul"
+### 6. Funcție "Găsește Telefonul"
 - Răspunde când este strigat pe nume
 - Vorbește continuu până la confirmare
 
-### 6. Gestionare Contacte
+### 7. Gestionare Contacte
 - Adăugare contacte manual sau prin voce
 - Apelare contacte
 - Trimitere SMS
 - Ștergere contacte
 
-### 7. Mementouri Medicamente
+### 8. Mementouri Medicamente
 - Calendar vocal pentru medicamente
 - Ora și ziua specifice pentru fiecare medicament
 - Notă despre locația medicamentelor
 - Memorare locație prin cameră
 - Alertă vocală când e ora să iei medicamentele
 
-### 8. Monitorizare Baterie
+### 9. Monitorizare Baterie
 - Afișare nivel baterie
 - Alertă vocală când bateria este la 10%
 - Verificare baterie prin comandă vocală
 
-### 9. Ecran Activ
+### 10. Ecran Activ
 - Telefonul rămâne activ (nu se închide ecranul)
 - Activare la comandă vocală
 
-## Interfață Accesibilă
-- Butoane mari (min 44px) pentru touch
-- Contrast ridicat
-- Feedback haptic (vibrații)
-- Design minimalist
-- Toate textele în română
+## API Endpoints v2.1
 
-## Tehnologii
-- Frontend: React Native / Expo
-- Backend: FastAPI + MongoDB
-- AI: OpenAI GPT-4o (via Emergent LLM Key - GRATUIT)
-- Text-to-Speech: expo-speech
-- Cameră: expo-camera
-- Baterie: expo-battery
-- Keep Awake: expo-keep-awake
-
-## Limbi Suportate
-- Română 🇷🇴
-- English 🇬🇧
-- Deutsch 🇩🇪
-- Français 🇫🇷
-- Español 🇪🇸
-- Italiano 🇮🇹
-
-## API Endpoints v2.0
+### Speech-to-Text (NOU!)
+- POST /api/speech/transcribe - Transcrie audio în text
+- POST /api/speech/transcribe-and-process - Transcrie și procesează ca comandă vocală
 
 ### Branding
 - GET /api/brand - Informații brand
@@ -101,20 +88,32 @@ Aplicație completă de accesibilitate cu AI pentru persoane nevăzătoare, cu c
 - POST /api/medications - Adaugă memento
 - PUT /api/medications/:id - Actualizează memento
 - DELETE /api/medications/:id - Șterge memento
-- GET /api/medications/due - Medicamente scadente acum
-
-### SMS
-- POST /api/sms/send - Trimite SMS
-- GET /api/sms/history - Istoric SMS
 
 ### Voice & Vision
-- POST /api/voice/command - Procesează comandă vocală
+- POST /api/voice/command - Procesează comandă vocală text
 - POST /api/vision/analyze - Analizează imagine
 
-### Settings
-- GET /api/settings - Setări utilizator
-- PUT /api/settings - Actualizează setări
-- GET /api/greeting - Salut personalizat
+## Tehnologii
+- Frontend: React Native / Expo
+- Backend: FastAPI + MongoDB
+- AI Text: OpenAI GPT-4o (via Emergent LLM Key)
+- AI Speech: OpenAI Whisper (via Emergent LLM Key) - GRATUIT
+- AI Vision: OpenAI GPT-4o Vision
+- Text-to-Speech: expo-speech
+- Audio Recording: expo-av
+- Cameră: expo-camera
+- Baterie: expo-battery
+
+## Limbi Suportate
+- Română 🇷🇴
+- English 🇬🇧
+- Deutsch 🇩🇪
+- Français 🇫🇷
+- Español 🇪🇸
+- Italiano 🇮🇹
 
 ## Status
-✅ MVP v2.0 Complet - Aplicație funcțională cu toate funcționalitățile cerute
+✅ MVP v2.1 Complet cu:
+- Recunoaștere vocală REALĂ cu OpenAI Whisper
+- Branding corectat "Brend Elyn"
+- Toate funcționalitățile cerute
