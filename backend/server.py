@@ -55,19 +55,23 @@ class VoiceCommandResponse(BaseModel):
 class ImageAnalysisRequest(BaseModel):
     image_base64: str
     language: Optional[str] = "ro"
+    context: Optional[str] = None  # For medication location tracking
 
 class ImageAnalysisResponse(BaseModel):
     description: str
     objects_detected: List[str]
     obstacles: List[str]
     guidance: str
+    medication_location: Optional[str] = None
 
 class UserSettings(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    voice_type: str = "female"  # "female" for Ely, "male" for Elyn
+    voice_type: str = "female"
     voice_name: str = "Ely"
     preferred_language: str = "ro"
     voice_sample_registered: bool = False
+    low_battery_alert: bool = True
+    battery_threshold: int = 10
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -76,47 +80,102 @@ class UserSettingsUpdate(BaseModel):
     voice_name: Optional[str] = None
     preferred_language: Optional[str] = None
     voice_sample_registered: Optional[bool] = None
+    low_battery_alert: Optional[bool] = None
+    battery_threshold: Optional[int] = None
+
+# Contact Model
+class Contact(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    phone_number: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ContactCreate(BaseModel):
+    name: str
+    phone_number: str
+
+# Medication Reminder Model
+class MedicationReminder(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    medication_name: str
+    dosage: str
+    reminder_time: str  # Format: HH:MM
+    days: List[str]  # ["monday", "tuesday", etc.] or ["daily"]
+    notes: Optional[str] = None
+    location_description: Optional[str] = None
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class MedicationReminderCreate(BaseModel):
+    medication_name: str
+    dosage: str
+    reminder_time: str
+    days: List[str]
+    notes: Optional[str] = None
+    location_description: Optional[str] = None
+
+# SMS Model
+class SMSMessage(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    contact_name: str
+    phone_number: str
+    message: str
+    sent_at: datetime = Field(default_factory=datetime.utcnow)
+    status: str = "pending"
+
+class SMSSend(BaseModel):
+    contact_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    message: str
 
 # ===== AI INTEGRATION =====
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
-async def process_voice_command(text: str, language: str = None) -> dict:
+async def process_voice_command(text: str, language: str = None, contacts: list = None) -> dict:
     """Process voice command using AI"""
     try:
         api_key = os.environ.get('EMERGENT_LLM_KEY')
         if not api_key:
             raise HTTPException(status_code=500, detail="AI API key not configured")
         
+        contacts_info = ""
+        if contacts:
+            contacts_info = "\n\nContacte disponibile:\n" + "\n".join([f"- {c['name']}: {c['phone_number']}" for c in contacts])
+        
         chat = LlmChat(
             api_key=api_key,
             session_id=f"voice-cmd-{uuid.uuid4()}",
-            system_message="""Ești Ely/Elyn, un asistent vocal inteligent pentru persoane nevăzătoare. 
+            system_message=f"""Ești Ely/Elyn, un asistent vocal inteligent pentru persoane nevăzătoare. 
             
 Analizează comanda utilizatorului și răspunde în aceeași limbă în care a fost formulată comanda.
 Detectează automat limba și răspunde natural.
+{contacts_info}
 
 Returnează un JSON cu următoarea structură:
-{
+{{
     "response_text": "Răspunsul vocal pentru utilizator (în limba detectată)",
     "detected_language": "codul limbii (ro, en, de, fr, es, it, etc.)",
-    "action_type": "unul din: call, sms, open_app, read_messages, read_notifications, time, camera, settings, find_phone, greeting, help, unknown",
-    "action_data": {
+    "action_type": "unul din: call, sms, open_app, read_messages, read_notifications, time, camera, settings, find_phone, greeting, help, add_contact, add_medication, check_medication, battery_status, unknown",
+    "action_data": {{
         "contact_name": "numele contactului (dacă e apel sau SMS)",
+        "phone_number": "numărul de telefon",
         "message": "mesajul de trimis (dacă e SMS)",
         "app_name": "numele aplicației (dacă e deschidere aplicație)",
-        "setting_name": "setarea de modificat (dacă sunt setări)",
-        "setting_value": "valoarea nouă"
-    }
-}
+        "medication_name": "numele medicamentului",
+        "medication_dosage": "doza",
+        "medication_time": "ora HH:MM",
+        "medication_days": ["daily"] sau ["monday", "tuesday", etc.]
+    }}
+}}
 
 Exemple de comenzi și acțiuni:
-- "Sună pe Maria" -> action_type: "call", action_data: {"contact_name": "Maria"}
-- "Trimite mesaj lui Ion: Vin în 5 minute" -> action_type: "sms"
+- "Sună pe Maria" -> action_type: "call", action_data: {{"contact_name": "Maria"}}
+- "Trimite mesaj lui Ion: Vin în 5 minute" -> action_type: "sms", action_data: {{"contact_name": "Ion", "message": "Vin în 5 minute"}}
+- "Adaugă contact Maria cu numărul 0722123456" -> action_type: "add_contact", action_data: {{"contact_name": "Maria", "phone_number": "0722123456"}}
 - "Ce oră este?" -> action_type: "time"
-- "Deschide WhatsApp" -> action_type: "open_app"
-- "Citește mesajele" -> action_type: "read_messages"
-- "Citește notificările" -> action_type: "read_notifications"
-- "Activează camera" -> action_type: "camera"
+- "Amintește-mi să iau Aspirina la ora 8 dimineața" -> action_type: "add_medication"
+- "Unde am pus medicamentele?" -> action_type: "check_medication"
+- "Cât la sută baterie am?" -> action_type: "battery_status"
 - "Elyn unde ești?" / "Ely unde ești?" -> action_type: "find_phone"
 
 Fii prietenos, cald și empatic. Răspunde clar și concis pentru a fi ușor de înțeles când este citit cu voce."""
@@ -128,7 +187,6 @@ Fii prietenos, cald și empatic. Răspunde clar și concis pentru a fi ușor de 
         # Parse JSON response
         import json
         try:
-            # Try to extract JSON from response
             response_text = response.strip()
             if response_text.startswith("```json"):
                 response_text = response_text[7:]
@@ -140,7 +198,6 @@ Fii prietenos, cald și empatic. Răspunde clar și concis pentru a fi ușor de 
             result = json.loads(response_text.strip())
             return result
         except json.JSONDecodeError:
-            # If not valid JSON, create a simple response
             return {
                 "response_text": response,
                 "detected_language": language or "ro",
@@ -157,18 +214,26 @@ Fii prietenos, cald și empatic. Răspunde clar și concis pentru a fi ușor de 
             "action_data": {"error": str(e)}
         }
 
-async def analyze_image_for_blind(image_base64: str, language: str = "ro") -> dict:
+async def analyze_image_for_blind(image_base64: str, language: str = "ro", context: str = None) -> dict:
     """Analyze image for obstacles and objects to help blind users"""
     try:
         api_key = os.environ.get('EMERGENT_LLM_KEY')
         if not api_key:
             raise HTTPException(status_code=500, detail="AI API key not configured")
         
+        medication_context = ""
+        if context == "medication":
+            medication_context = """
+CONTEXT SPECIAL: Utilizatorul caută să memoreze unde pune medicamentele.
+Pe lângă descrierea normală, adaugă și câmpul "medication_location" cu o descriere 
+detaliată a locului unde se află medicamentele (ex: "pe raftul din stânga dulapului alb din bucătărie")."""
+        
         chat = LlmChat(
             api_key=api_key,
             session_id=f"image-analysis-{uuid.uuid4()}",
             system_message=f"""Ești un asistent vizual pentru persoane nevăzătoare. 
 Analizează imaginea și descrie CE VEZI în mod CLAR și UTIL pentru navigare.
+{medication_context}
 
 Răspunde în limba: {language}
 
@@ -177,7 +242,8 @@ Returnează JSON cu:
     "description": "Descriere clară și concisă a scenei (max 2 propoziții)",
     "objects_detected": ["listă cu obiectele principale detectate"],
     "obstacles": ["obstacole sau pericole detectate care trebuie evitate"],
-    "guidance": "Instrucțiuni clare de navigare/ghidare pentru persoana nevăzătoare"
+    "guidance": "Instrucțiuni clare de navigare/ghidare pentru persoana nevăzătoare",
+    "medication_location": "Descriere detaliată a locului unde sunt medicamentele (doar dacă contextul este medication)"
 }}
 
 IMPORTANT:
@@ -196,7 +262,6 @@ IMPORTANT:
         
         response = await chat.send_message(user_message)
         
-        # Parse JSON response
         import json
         try:
             response_text = response.strip()
@@ -214,7 +279,8 @@ IMPORTANT:
                 "description": response,
                 "objects_detected": [],
                 "obstacles": [],
-                "guidance": "Nu am putut analiza complet imaginea."
+                "guidance": "Nu am putut analiza complet imaginea.",
+                "medication_location": None
             }
             
     except Exception as e:
@@ -223,14 +289,15 @@ IMPORTANT:
             "description": "Eroare la analiza imaginii",
             "objects_detected": [],
             "obstacles": [],
-            "guidance": "Te rog încearcă din nou."
+            "guidance": "Te rog încearcă din nou.",
+            "medication_location": None
         }
 
 # ===== API ROUTES =====
 
 @api_router.get("/")
 async def root():
-    return {"message": "Ely/Elyn Voice Assistant API", "version": "1.0.0"}
+    return {"message": "Ely/Elyn Voice Assistant API", "version": "2.0.0", "brand": "Brend Ekyn", "creator": "Creiat de Ciorpac Sorin"}
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
@@ -248,7 +315,11 @@ async def get_status_checks():
 @api_router.post("/voice/command", response_model=VoiceCommandResponse)
 async def process_voice(request: VoiceCommandRequest):
     """Process a voice command and return the appropriate action"""
-    result = await process_voice_command(request.text, request.language)
+    # Get contacts for context
+    contacts = await db.contacts.find().to_list(100)
+    contacts_list = [{"name": c["name"], "phone_number": c["phone_number"]} for c in contacts]
+    
+    result = await process_voice_command(request.text, request.language, contacts_list)
     return VoiceCommandResponse(
         response_text=result.get("response_text", ""),
         detected_language=result.get("detected_language", "ro"),
@@ -260,13 +331,132 @@ async def process_voice(request: VoiceCommandRequest):
 @api_router.post("/vision/analyze", response_model=ImageAnalysisResponse)
 async def analyze_image(request: ImageAnalysisRequest):
     """Analyze an image to help blind users navigate"""
-    result = await analyze_image_for_blind(request.image_base64, request.language)
+    result = await analyze_image_for_blind(request.image_base64, request.language, request.context)
     return ImageAnalysisResponse(
         description=result.get("description", ""),
         objects_detected=result.get("objects_detected", []),
         obstacles=result.get("obstacles", []),
-        guidance=result.get("guidance", "")
+        guidance=result.get("guidance", ""),
+        medication_location=result.get("medication_location")
     )
+
+# ===== CONTACTS API =====
+
+@api_router.get("/contacts", response_model=List[Contact])
+async def get_contacts():
+    """Get all contacts"""
+    contacts = await db.contacts.find().to_list(100)
+    return [Contact(**contact) for contact in contacts]
+
+@api_router.post("/contacts", response_model=Contact)
+async def create_contact(contact: ContactCreate):
+    """Create a new contact"""
+    contact_obj = Contact(**contact.dict())
+    await db.contacts.insert_one(contact_obj.dict())
+    return contact_obj
+
+@api_router.delete("/contacts/{contact_id}")
+async def delete_contact(contact_id: str):
+    """Delete a contact"""
+    result = await db.contacts.delete_one({"id": contact_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    return {"message": "Contact deleted"}
+
+# ===== MEDICATION REMINDERS API =====
+
+@api_router.get("/medications", response_model=List[MedicationReminder])
+async def get_medications():
+    """Get all medication reminders"""
+    medications = await db.medications.find().to_list(100)
+    return [MedicationReminder(**med) for med in medications]
+
+@api_router.post("/medications", response_model=MedicationReminder)
+async def create_medication(medication: MedicationReminderCreate):
+    """Create a new medication reminder"""
+    med_obj = MedicationReminder(**medication.dict())
+    await db.medications.insert_one(med_obj.dict())
+    return med_obj
+
+@api_router.put("/medications/{medication_id}")
+async def update_medication(medication_id: str, medication: MedicationReminderCreate):
+    """Update a medication reminder"""
+    update_data = medication.dict()
+    update_data["updated_at"] = datetime.utcnow()
+    
+    result = await db.medications.find_one_and_update(
+        {"id": medication_id},
+        {"$set": update_data},
+        return_document=True
+    )
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Medication not found")
+    return MedicationReminder(**result)
+
+@api_router.delete("/medications/{medication_id}")
+async def delete_medication(medication_id: str):
+    """Delete a medication reminder"""
+    result = await db.medications.delete_one({"id": medication_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Medication not found")
+    return {"message": "Medication reminder deleted"}
+
+@api_router.get("/medications/due")
+async def get_due_medications():
+    """Get medications due now (within 5 minutes)"""
+    now = datetime.utcnow()
+    current_time = now.strftime("%H:%M")
+    current_day = now.strftime("%A").lower()
+    
+    medications = await db.medications.find({"is_active": True}).to_list(100)
+    due_medications = []
+    
+    for med in medications:
+        if "daily" in med.get("days", []) or current_day in med.get("days", []):
+            reminder_time = med.get("reminder_time", "")
+            if reminder_time:
+                # Check if within 5 minutes
+                reminder_hour, reminder_min = map(int, reminder_time.split(":"))
+                current_hour, current_min = map(int, current_time.split(":"))
+                
+                diff = abs((reminder_hour * 60 + reminder_min) - (current_hour * 60 + current_min))
+                if diff <= 5:
+                    due_medications.append(MedicationReminder(**med))
+    
+    return due_medications
+
+# ===== SMS API =====
+
+@api_router.post("/sms/send")
+async def send_sms(sms: SMSSend):
+    """Send an SMS (stores in database, actual sending done on device)"""
+    # Find contact if only name provided
+    phone = sms.phone_number
+    if not phone and sms.contact_name:
+        contact = await db.contacts.find_one({"name": {"$regex": sms.contact_name, "$options": "i"}})
+        if contact:
+            phone = contact["phone_number"]
+        else:
+            raise HTTPException(status_code=404, detail=f"Contact {sms.contact_name} not found")
+    
+    if not phone:
+        raise HTTPException(status_code=400, detail="No phone number provided")
+    
+    sms_obj = SMSMessage(
+        contact_name=sms.contact_name or "Unknown",
+        phone_number=phone,
+        message=sms.message
+    )
+    
+    await db.sms_messages.insert_one(sms_obj.dict())
+    return {"message": "SMS prepared for sending", "sms": sms_obj.dict()}
+
+@api_router.get("/sms/history", response_model=List[SMSMessage])
+async def get_sms_history():
+    """Get SMS history"""
+    messages = await db.sms_messages.find().sort("sent_at", -1).to_list(50)
+    return [SMSMessage(**msg) for msg in messages]
 
 # User Settings
 @api_router.get("/settings")
@@ -274,7 +464,6 @@ async def get_settings():
     """Get user settings"""
     settings = await db.user_settings.find_one({})
     if not settings:
-        # Create default settings
         default_settings = UserSettings()
         await db.user_settings.insert_one(default_settings.dict())
         return default_settings
@@ -286,7 +475,6 @@ async def update_settings(update: UserSettingsUpdate):
     update_data = {k: v for k, v in update.dict().items() if v is not None}
     update_data["updated_at"] = datetime.utcnow()
     
-    # Update voice name based on type
     if update.voice_type == "female":
         update_data["voice_name"] = "Ely"
     elif update.voice_type == "male":
@@ -323,7 +511,20 @@ async def get_greeting():
         "greeting": greetings.get(settings.preferred_language, greetings["ro"]),
         "voice_name": voice_name,
         "voice_type": settings.voice_type,
-        "language": settings.preferred_language
+        "language": settings.preferred_language,
+        "brand": "Brend Ekyn",
+        "creator": "Creiat de Ciorpac Sorin"
+    }
+
+# Brand Info
+@api_router.get("/brand")
+async def get_brand_info():
+    """Get brand information"""
+    return {
+        "brand_name": "Brend Ekyn",
+        "creator": "Creiat de Ciorpac Sorin",
+        "version": "2.0.0",
+        "app_name": "Ekyn Voice Assistant"
     }
 
 # Include the router in the main app

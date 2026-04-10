@@ -15,10 +15,15 @@ export interface VoiceCommandResponse {
   action_type: string;
   action_data?: {
     contact_name?: string;
+    phone_number?: string;
     message?: string;
     app_name?: string;
     setting_name?: string;
     setting_value?: string;
+    medication_name?: string;
+    medication_dosage?: string;
+    medication_time?: string;
+    medication_days?: string[];
     error?: string;
   };
 }
@@ -28,6 +33,7 @@ export interface ImageAnalysisResponse {
   objects_detected: string[];
   obstacles: string[];
   guidance: string;
+  medication_location?: string;
 }
 
 export interface GreetingResponse {
@@ -35,6 +41,26 @@ export interface GreetingResponse {
   voice_name: string;
   voice_type: string;
   language: string;
+  brand: string;
+  creator: string;
+}
+
+export interface Contact {
+  id: string;
+  name: string;
+  phone_number: string;
+  created_at: string;
+}
+
+export interface MedicationReminder {
+  id: string;
+  medication_name: string;
+  dosage: string;
+  reminder_time: string;
+  days: string[];
+  notes?: string;
+  location_description?: string;
+  is_active: boolean;
 }
 
 export const voiceApi = {
@@ -45,8 +71,62 @@ export const voiceApi = {
 };
 
 export const visionApi = {
-  analyzeImage: async (imageBase64: string, language: string = 'ro'): Promise<ImageAnalysisResponse> => {
-    const response = await api.post('/vision/analyze', { image_base64: imageBase64, language });
+  analyzeImage: async (imageBase64: string, language: string = 'ro', context?: string): Promise<ImageAnalysisResponse> => {
+    const response = await api.post('/vision/analyze', { image_base64: imageBase64, language, context });
+    return response.data;
+  },
+};
+
+export const contactsApi = {
+  getContacts: async (): Promise<Contact[]> => {
+    const response = await api.get('/contacts');
+    return response.data;
+  },
+  
+  createContact: async (name: string, phone_number: string): Promise<Contact> => {
+    const response = await api.post('/contacts', { name, phone_number });
+    return response.data;
+  },
+  
+  deleteContact: async (id: string): Promise<void> => {
+    await api.delete(`/contacts/${id}`);
+  },
+};
+
+export const medicationsApi = {
+  getMedications: async (): Promise<MedicationReminder[]> => {
+    const response = await api.get('/medications');
+    return response.data;
+  },
+  
+  createMedication: async (medication: Omit<MedicationReminder, 'id' | 'is_active'>): Promise<MedicationReminder> => {
+    const response = await api.post('/medications', medication);
+    return response.data;
+  },
+  
+  updateMedication: async (id: string, medication: Omit<MedicationReminder, 'id' | 'is_active'>): Promise<MedicationReminder> => {
+    const response = await api.put(`/medications/${id}`, medication);
+    return response.data;
+  },
+  
+  deleteMedication: async (id: string): Promise<void> => {
+    await api.delete(`/medications/${id}`);
+  },
+  
+  getDueMedications: async (): Promise<MedicationReminder[]> => {
+    const response = await api.get('/medications/due');
+    return response.data;
+  },
+};
+
+export const smsApi = {
+  sendSms: async (contact_name: string | null, phone_number: string | null, message: string): Promise<any> => {
+    const response = await api.post('/sms/send', { contact_name, phone_number, message });
+    return response.data;
+  },
+  
+  getSmsHistory: async (): Promise<any[]> => {
+    const response = await api.get('/sms/history');
     return response.data;
   },
 };
@@ -64,6 +144,11 @@ export const settingsApi = {
   
   getGreeting: async (): Promise<GreetingResponse> => {
     const response = await api.get('/greeting');
+    return response.data;
+  },
+  
+  getBrandInfo: async () => {
+    const response = await api.get('/brand');
     return response.data;
   },
 };

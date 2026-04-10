@@ -1,12 +1,17 @@
-# Ely/Elyn - Asistent Vocal pentru Nevăzători
+# Ekyn Voice Assistant v2.0 - Brend Ekyn
+## Creiat de Ciorpac Sorin
 
 ## Descriere
-Aplicație de accesibilitate cu AI pentru persoane nevăzătoare, care oferă control vocal complet al telefonului.
+Aplicație completă de accesibilitate cu AI pentru persoane nevăzătoare, cu control vocal total al telefonului.
 
-## Funcționalități Implementate
+## Funcționalități Implementate v2.0
 
-### 1. Asistent Vocal AI
-- **Comenzi vocale multi-limbă**: Detectare automată a limbii (RO, EN, DE, FR, ES, IT)
+### 1. Branding
+- **Splash Screen**: "E" mare pe fundal albastru cu "Brend Ekyn" și "Creiat de Ciorpac Sorin"
+- **Avatar**: Litera "E" în interfață
+
+### 2. Asistent Vocal AI
+- **Comenzi vocale multi-limbă**: Detectare automată (RO, EN, DE, FR, ES, IT)
 - **Răspuns în aceeași limbă**: AI răspunde în limba în care a fost întrebat
 - **Acțiuni suportate**:
   - Anunțare oră
@@ -14,36 +19,64 @@ Aplicație de accesibilitate cu AI pentru persoane nevăzătoare, care oferă co
   - Trimitere SMS
   - Deschidere aplicații
   - Citire notificări
-  - Setări telefon
+  - Adăugare contacte prin voce
+  - Adăugare medicamente prin voce
+  - Verificare baterie
   - Căutare telefon
 
-### 2. Ghidare Vizuală cu Cameră
+### 3. Ghidare Vizuală cu Cameră
 - Recunoaștere obiecte prin AI Vision
 - Detectare obstacole
 - Ghidare audio pentru navigare
+- Memorare locație medicamente
 - Suport cameră frontală/spate
 
-### 3. Voce Personalizabilă
+### 4. Voce Personalizabilă
 - **Ely** - Voce feminină
 - **Elyn** - Voce masculină
-- Salut personalizat: "Bună, eu sunt Ely/Elyn, asistentul tău vocal..."
+- Salut personalizat
 
-### 4. Funcție "Găsește Telefonul"
+### 5. Funcție "Găsește Telefonul"
 - Răspunde când este strigat pe nume
-- Vorbește continuu până când utilizatorul confirmă că l-a găsit
+- Vorbește continuu până la confirmare
 
-### 5. Interfață Accesibilă
+### 6. Gestionare Contacte
+- Adăugare contacte manual sau prin voce
+- Apelare contacte
+- Trimitere SMS
+- Ștergere contacte
+
+### 7. Mementouri Medicamente
+- Calendar vocal pentru medicamente
+- Ora și ziua specifice pentru fiecare medicament
+- Notă despre locația medicamentelor
+- Memorare locație prin cameră
+- Alertă vocală când e ora să iei medicamentele
+
+### 8. Monitorizare Baterie
+- Afișare nivel baterie
+- Alertă vocală când bateria este la 10%
+- Verificare baterie prin comandă vocală
+
+### 9. Ecran Activ
+- Telefonul rămâne activ (nu se închide ecranul)
+- Activare la comandă vocală
+
+## Interfață Accesibilă
 - Butoane mari (min 44px) pentru touch
 - Contrast ridicat
 - Feedback haptic (vibrații)
 - Design minimalist
+- Toate textele în română
 
-## Tehnologii Utilizate
-- **Frontend**: React Native / Expo
-- **Backend**: FastAPI + MongoDB
-- **AI**: OpenAI GPT-4o (via Emergent LLM Key)
-- **Text-to-Speech**: expo-speech
-- **Cameră**: expo-camera
+## Tehnologii
+- Frontend: React Native / Expo
+- Backend: FastAPI + MongoDB
+- AI: OpenAI GPT-4o (via Emergent LLM Key - GRATUIT)
+- Text-to-Speech: expo-speech
+- Cameră: expo-camera
+- Baterie: expo-battery
+- Keep Awake: expo-keep-awake
 
 ## Limbi Suportate
 - Română 🇷🇴
@@ -53,37 +86,35 @@ Aplicație de accesibilitate cu AI pentru persoane nevăzătoare, care oferă co
 - Español 🇪🇸
 - Italiano 🇮🇹
 
-## API Endpoints
+## API Endpoints v2.0
 
-### GET /api/
-Informații despre API
+### Branding
+- GET /api/brand - Informații brand
 
-### GET /api/greeting
-Obține salutul asistentului
+### Contacte
+- GET /api/contacts - Lista contacte
+- POST /api/contacts - Adaugă contact
+- DELETE /api/contacts/:id - Șterge contact
 
-### GET /api/settings
-Obține setările utilizatorului
+### Medicamente
+- GET /api/medications - Lista mementouri
+- POST /api/medications - Adaugă memento
+- PUT /api/medications/:id - Actualizează memento
+- DELETE /api/medications/:id - Șterge memento
+- GET /api/medications/due - Medicamente scadente acum
 
-### PUT /api/settings
-Actualizează setările (voce, limbă)
+### SMS
+- POST /api/sms/send - Trimite SMS
+- GET /api/sms/history - Istoric SMS
 
-### POST /api/voice/command
-Procesează comandă vocală
-```json
-{
-  "text": "Ce oră este?",
-  "language": "ro"
-}
-```
+### Voice & Vision
+- POST /api/voice/command - Procesează comandă vocală
+- POST /api/vision/analyze - Analizează imagine
 
-### POST /api/vision/analyze
-Analizează imagine pentru navigare
-```json
-{
-  "image_base64": "...",
-  "language": "ro"
-}
-```
+### Settings
+- GET /api/settings - Setări utilizator
+- PUT /api/settings - Actualizează setări
+- GET /api/greeting - Salut personalizat
 
 ## Status
-✅ MVP Complet - Aplicație funcțională
+✅ MVP v2.0 Complet - Aplicație funcțională cu toate funcționalitățile cerute
