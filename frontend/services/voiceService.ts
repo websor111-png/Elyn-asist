@@ -27,6 +27,9 @@ class VoiceService {
     // Stop any current speech
     await this.stop();
     
+    // Check if Speech is available
+    const isSpeechAvailable = await Speech.isSpeakingAsync().catch(() => false);
+    
     const voiceConfig = languageVoiceMap[language] || languageVoiceMap['en'];
     const voiceLang = Platform.OS === 'ios' ? voiceConfig.ios : voiceConfig.android;
     
@@ -36,23 +39,30 @@ class VoiceService {
     return new Promise((resolve, reject) => {
       this.isSpeaking = true;
       
-      Speech.speak(text, {
-        language: voiceLang,
-        pitch: adjustedPitch,
-        rate: rate,
-        onDone: () => {
-          this.isSpeaking = false;
-          resolve();
-        },
-        onError: (error) => {
-          this.isSpeaking = false;
-          reject(error);
-        },
-        onStopped: () => {
-          this.isSpeaking = false;
-          resolve();
-        },
-      });
+      try {
+        Speech.speak(text, {
+          language: voiceLang,
+          pitch: adjustedPitch,
+          rate: rate,
+          onDone: () => {
+            this.isSpeaking = false;
+            resolve();
+          },
+          onError: (error) => {
+            this.isSpeaking = false;
+            console.log('Speech error:', error);
+            resolve(); // Resolve anyway to not block the app
+          },
+          onStopped: () => {
+            this.isSpeaking = false;
+            resolve();
+          },
+        });
+      } catch (error) {
+        console.log('Speech not available:', error);
+        this.isSpeaking = false;
+        resolve();
+      }
     });
   }
 

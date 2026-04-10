@@ -1,22 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import * as KeepAwake from 'expo-keep-awake';
 
 export default function SplashScreen() {
   const router = useRouter();
   const [fadeAnim] = useState(new Animated.Value(0));
 
   useEffect(() => {
-    // Keep screen awake (only on native platforms)
-    if (Platform.OS !== 'web') {
-      try {
-        KeepAwake.activateKeepAwakeAsync();
-      } catch (e) {
-        console.log('KeepAwake not available');
-      }
-    }
-
     // Fade in animation
     Animated.timing(fadeAnim, {
       toValue: 1,
@@ -24,10 +14,10 @@ export default function SplashScreen() {
       useNativeDriver: true,
     }).start();
 
-    // Navigate to home after 3 seconds
+    // Navigate to home after 2 seconds
     const timer = setTimeout(() => {
       router.replace('/home');
-    }, 3000);
+    }, 2000);
 
     return () => {
       clearTimeout(timer);
@@ -35,7 +25,7 @@ export default function SplashScreen() {
   }, []);
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} accessible={true} accessibilityLabel="Elyn Voice Assistant se încarcă">
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
         <View style={styles.logoContainer}>
           <Text style={styles.logoText}>E</Text>
@@ -81,7 +71,7 @@ const styles = StyleSheet.create({
     fontSize: 140,
     fontWeight: 'bold',
     color: '#1a56db',
-    fontFamily: 'serif',
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   brandContainer: {
     position: 'absolute',

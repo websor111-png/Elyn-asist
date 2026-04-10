@@ -1,93 +1,75 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  Vibration,
-  Platform,
-  ActivityIndicator,
-  Alert,
-  AppState,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import * as KeepAwake from 'expo-keep-awake';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, StyleSheet, Platform, AppState, Vibration } from 'react-native';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import { useSettings } from '../context/SettingsContext';
 import voiceService from '../services/voiceService';
 import batteryService from '../services/batteryService';
-import medicationService, { MedicationReminder } from '../services/medicationService';
-import { voiceApi, medicationsApi } from '../services/api';
+import medicationService from '../services/medicationService';
+import { speechApi, voiceApi, contactsApi } from '../services/api';
 
 export default function HomeScreen() {
-  const router = useRouter();
   const { settings, isLoading } = useSettings();
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [statusText, setStatusText] = useState('');
-  const [lastResponse, setLastResponse] = useState('');
-  const [isFindingPhone, setIsFindingPhone] = useState(false);
-  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
-  const findPhoneIntervalRef = useRef<any>(null);
+  const [statusText, setStatusText] = useState('Ascult...');
+  const recordingRef = useRef<Audio.Recording | null>(null);
   const appState = useRef(AppState.currentState);
+  const isRecordingRef = useRef(false);
+  const silenceTimerRef = useRef<any>(null);
 
   useEffect(() => {
-    // Keep screen awake (only on native platforms)
-    if (Platform.OS !== 'web') {
-      try {
-        KeepAwake.activateKeepAwakeAsync();
-      } catch (e) {
-        console.log('KeepAwake not available');
-      }
-    }
-
-    // Initialize services
-    initializeServices();
-
-    // App state listener
+    initializeApp();
+    
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
-        // App came to foreground - could trigger voice activation
-        console.log('App came to foreground');
+        // App came to foreground - restart listening
+        startContinuousListening();
       }
       appState.current = nextAppState;
     });
 
     return () => {
       subscription.remove();
+      stopListening();
       batteryService.stopMonitoring();
       medicationService.stopMonitoring();
-      if (findPhoneIntervalRef.current) {
-        clearInterval(findPhoneIntervalRef.current);
-      }
     };
   }, []);
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && settings.voiceName) {
+      // Speak greeting when app starts
       speakGreeting();
-      updateBatteryLevel();
     }
-  }, [isLoading]);
+  }, [isLoading, settings.voiceName]);
 
-  const initializeServices = async () => {
-    // Battery monitoring
-    batteryService.startMonitoring(10, async (level) => {
-      await batteryService.speakLowBatteryWarning(
-        level,
-        settings.voiceType,
-        settings.preferredLanguage
-      );
+  const initializeApp = async () => {
+    // Request microphone permission
+    const { status } = await Audio.requestPermissionsAsync();
+    if (status !== 'granted') {
+      await voiceService.speak('Am nevoie de permisiune pentru microfon pentru a te putea auzi.', {
+        language: 'ro',
+        voiceType: settings.voiceType || 'female',
+      });
+      return;
+    }
+
+    // Configure audio
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
     });
 
-    // Medication reminders
+    // Start battery monitoring
+    batteryService.startMonitoring(10, async (level) => {
+      await batteryService.speakLowBatteryWarning(level, settings.voiceType, settings.preferredLanguage);
+    });
+
+    // Start medication monitoring
     medicationService.startMonitoring(async (medication) => {
-      const text = medicationService.generateMedicationReminderText(
-        medication,
-        settings.preferredLanguage
-      );
-      Vibration.vibrate([500, 500, 500]);
+      const text = medicationService.generateMedicationReminderText(medication, settings.preferredLanguage);
+      Vibration.vibrate([500, 500, 500, 500, 500]);
       await voiceService.speak(text, {
         language: settings.preferredLanguage,
         voiceType: settings.voiceType,
@@ -95,431 +77,321 @@ export default function HomeScreen() {
     });
   };
 
-  const updateBatteryLevel = async () => {
-    const level = await batteryService.getBatteryLevel();
-    setBatteryLevel(level);
-  };
-
   const speakGreeting = async () => {
     try {
-      await voiceService.speakGreeting(
-        settings.voiceName,
-        settings.voiceType,
-        settings.preferredLanguage
+      const voiceName = settings.voiceName || 'Ely';
+      const voiceType = settings.voiceType || 'female';
+      const language = settings.preferredLanguage || 'ro';
+
+      await voiceService.speak(
+        `Bună! Eu sunt ${voiceName}, asistentul tău vocal. Spune numele meu oricând ai nevoie de ajutor. De exemplu: ${voiceName}, ce oră este?`,
+        { language, voiceType }
       );
+
+      // Start listening after greeting
+      setTimeout(() => {
+        startContinuousListening();
+      }, 1000);
     } catch (error) {
       console.error('Error speaking greeting:', error);
+      startContinuousListening();
     }
   };
 
-  const handleMicPress = async () => {
-    Vibration.vibrate(50);
-    setIsListening(true);
-    setStatusText('Ascult...');
+  const startContinuousListening = async () => {
+    if (isRecordingRef.current || isProcessing) return;
     
-    // Navigate to voice input screen
-    setTimeout(() => {
-      setIsListening(false);
-      router.push('/voice-input');
-    }, 500);
-  };
+    try {
+      setIsListening(true);
+      setStatusText('Ascult...');
+      isRecordingRef.current = true;
 
-  const handleCameraPress = () => {
-    Vibration.vibrate(50);
-    voiceService.speak('Activez camera. Te voi ghida.', {
-      language: settings.preferredLanguage,
-      voiceType: settings.voiceType,
-    });
-    router.push('/camera');
-  };
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync({
+        android: {
+          extension: '.wav',
+          outputFormat: Audio.AndroidOutputFormat.DEFAULT,
+          audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: '.wav',
+          outputFormat: Audio.IOSOutputFormat.LINEARPCM,
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 128000,
+        },
+      });
 
-  const handleTimePress = async () => {
-    Vibration.vibrate(50);
-    await voiceService.speakTime(settings.voiceType, settings.preferredLanguage);
-  };
+      await recording.startAsync();
+      recordingRef.current = recording;
 
-  const handleSettingsPress = () => {
-    Vibration.vibrate(50);
-    voiceService.speak('Deschid setările.', {
-      language: settings.preferredLanguage,
-      voiceType: settings.voiceType,
-    });
-    router.push('/settings');
-  };
+      // Auto-stop after 5 seconds of recording to process
+      silenceTimerRef.current = setTimeout(async () => {
+        await processRecording();
+      }, 5000);
 
-  const handleBatteryPress = async () => {
-    Vibration.vibrate(50);
-    await batteryService.speakBatteryStatus(settings.voiceType, settings.preferredLanguage);
-    await updateBatteryLevel();
-  };
-
-  const handleContactsPress = () => {
-    Vibration.vibrate(50);
-    voiceService.speak('Deschid contactele.', {
-      language: settings.preferredLanguage,
-      voiceType: settings.voiceType,
-    });
-    router.push('/contacts');
-  };
-
-  const handleMedicationsPress = () => {
-    Vibration.vibrate(50);
-    voiceService.speak('Deschid mementourile pentru medicamente.', {
-      language: settings.preferredLanguage,
-      voiceType: settings.voiceType,
-    });
-    router.push('/medications');
-  };
-
-  const handleFindPhone = async () => {
-    Vibration.vibrate([100, 200, 100, 200, 100]);
-    setIsFindingPhone(true);
-    
-    // Speak repeatedly
-    const speakLoop = async () => {
-      await voiceService.speakFindPhone(
-        settings.voiceName,
-        settings.voiceType,
-        settings.preferredLanguage
-      );
-    };
-    
-    speakLoop();
-    findPhoneIntervalRef.current = setInterval(speakLoop, 3000);
-  };
-
-  const stopFindPhone = async () => {
-    setIsFindingPhone(false);
-    if (findPhoneIntervalRef.current) {
-      clearInterval(findPhoneIntervalRef.current);
-      findPhoneIntervalRef.current = null;
+    } catch (error) {
+      console.error('Error starting continuous listening:', error);
+      isRecordingRef.current = false;
+      // Retry after a delay
+      setTimeout(startContinuousListening, 2000);
     }
-    await voiceService.stop();
-    await voiceService.speak('Te-am găsit! Mă bucur că m-ai auzit.', {
-      language: settings.preferredLanguage,
-      voiceType: settings.voiceType,
-    });
   };
 
-  if (isLoading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <ActivityIndicator size="large" color="#4f46e5" />
-        <Text style={styles.loadingText}>Se încarcă...</Text>
-      </SafeAreaView>
-    );
-  }
+  const stopListening = async () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+
+    if (recordingRef.current) {
+      try {
+        await recordingRef.current.stopAndUnloadAsync();
+      } catch (e) {
+        console.log('Recording already stopped');
+      }
+      recordingRef.current = null;
+    }
+    isRecordingRef.current = false;
+    setIsListening(false);
+  };
+
+  const processRecording = async () => {
+    if (!recordingRef.current) {
+      startContinuousListening();
+      return;
+    }
+
+    try {
+      // Stop current recording
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      recordingRef.current = null;
+      isRecordingRef.current = false;
+
+      if (!uri) {
+        startContinuousListening();
+        return;
+      }
+
+      // Check if audio has content (file size check)
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      if (!fileInfo.exists || (fileInfo as any).size < 5000) {
+        // Too small, probably silence - restart listening
+        startContinuousListening();
+        return;
+      }
+
+      setIsProcessing(true);
+      setStatusText('Procesez...');
+
+      // Read audio as base64
+      const audioBase64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // Transcribe
+      const result = await speechApi.transcribeAndProcess(audioBase64, settings.preferredLanguage);
+
+      if (result.transcription?.text) {
+        const text = result.transcription.text.toLowerCase();
+        const voiceName = (settings.voiceName || 'Ely').toLowerCase();
+
+        // Check if wake word was detected
+        if (text.includes(voiceName) || text.includes('ely') || text.includes('elyn')) {
+          Vibration.vibrate(100);
+          
+          if (result.command_response) {
+            // Speak the response
+            await voiceService.speak(result.command_response.response_text, {
+              language: result.command_response.detected_language || settings.preferredLanguage,
+              voiceType: settings.voiceType,
+            });
+
+            // Handle actions
+            await handleAction(result.command_response);
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Error processing recording:', error);
+    } finally {
+      setIsProcessing(false);
+      // Restart listening
+      setTimeout(startContinuousListening, 500);
+    }
+  };
+
+  const handleAction = async (response: any) => {
+    const { action_type, action_data } = response;
+    const voiceType = settings.voiceType;
+    const language = response.detected_language || settings.preferredLanguage;
+
+    switch (action_type) {
+      case 'time':
+        await voiceService.speakTime(voiceType, language);
+        break;
+
+      case 'find_phone':
+        // Keep speaking until user says stop
+        Vibration.vibrate([100, 200, 100, 200, 100, 200]);
+        for (let i = 0; i < 5; i++) {
+          await voiceService.speakFindPhone(settings.voiceName, voiceType, language);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        break;
+
+      case 'battery_status':
+        await batteryService.speakBatteryStatus(voiceType, language);
+        break;
+
+      case 'add_contact':
+        if (action_data?.contact_name && action_data?.phone_number) {
+          try {
+            await contactsApi.createContact(action_data.contact_name, action_data.phone_number);
+            await voiceService.speak(`Am adăugat contactul ${action_data.contact_name}.`, { language, voiceType });
+          } catch (e) {
+            await voiceService.speak('Nu am putut adăuga contactul.', { language, voiceType });
+          }
+        }
+        break;
+
+      case 'call':
+        if (action_data?.contact_name) {
+          await voiceService.speak(`Încerc să sun pe ${action_data.contact_name}.`, { language, voiceType });
+          // In a real app, this would initiate a phone call
+        }
+        break;
+
+      case 'sms':
+        if (action_data?.contact_name && action_data?.message) {
+          await voiceService.speak(`Trimit mesaj lui ${action_data.contact_name}: ${action_data.message}`, { language, voiceType });
+          // In a real app, this would send an SMS
+        }
+        break;
+
+      case 'camera':
+        await voiceService.speak('Funcția de cameră este activată. Te voi ghida prin ce văd.', { language, voiceType });
+        // Would activate camera and provide audio guidance
+        break;
+
+      case 'read_notifications':
+        await voiceService.speak('Verifică notificările... Nu ai notificări noi.', { language, voiceType });
+        break;
+
+      case 'help':
+        await voiceService.speak(
+          `Poți să-mi spui: ${settings.voiceName} ce oră este, ${settings.voiceName} sună pe Maria, ${settings.voiceName} unde ești, ${settings.voiceName} cât la sută baterie am, sau ${settings.voiceName} activează camera.`,
+          { language, voiceType }
+        );
+        break;
+
+      default:
+        // Response already spoken
+        break;
+    }
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.assistantAvatar}>
-          <Text style={styles.avatarLetter}>E</Text>
-        </View>
-        <Text style={styles.assistantName}>{settings.voiceName}</Text>
-        <Text style={styles.assistantSubtitle}>Asistentul tău vocal</Text>
-        {batteryLevel !== null && (
-          <View style={styles.batteryIndicator}>
-            <Ionicons 
-              name={batteryLevel <= 20 ? "battery-dead" : batteryLevel <= 50 ? "battery-half" : "battery-full"} 
-              size={16} 
-              color={batteryLevel <= 10 ? "#ef4444" : "#22c55e"} 
-            />
-            <Text style={[styles.batteryText, batteryLevel <= 10 && styles.batteryLow]}>
-              {batteryLevel}%
-            </Text>
-          </View>
-        )}
+    <View style={styles.container} accessible={true} accessibilityLabel="Elyn Voice Assistant - Ascultă permanent pentru comenzi vocale">
+      {/* Minimal visual - just the brand */}
+      <View style={styles.logoContainer}>
+        <Text style={styles.logoText}>E</Text>
       </View>
 
-      {/* Status */}
+      <View style={styles.brandContainer}>
+        <Text style={styles.brandName}>Brend Elyn</Text>
+        <Text style={styles.creator}>Creiat de Ciorpac Sorin</Text>
+      </View>
+
+      {/* Status indicator for debugging - could be hidden in production */}
       <View style={styles.statusContainer}>
-        {isListening && (
-          <View style={styles.listeningIndicator}>
-            <Ionicons name="mic" size={24} color="#ef4444" />
-            <Text style={styles.statusText}>Ascult...</Text>
-          </View>
-        )}
-        {lastResponse && !isListening && (
-          <Text style={styles.responseText}>{lastResponse}</Text>
-        )}
+        <View style={[styles.statusDot, isListening && styles.statusDotActive, isProcessing && styles.statusDotProcessing]} />
+        <Text style={styles.statusText}>{statusText}</Text>
       </View>
-
-      {/* Main Action Button */}
-      <View style={styles.mainActions}>
-        <TouchableOpacity
-          style={[styles.micButton, isListening && styles.micButtonActive]}
-          onPress={handleMicPress}
-          accessibilityLabel="Apasă pentru a vorbi"
-          accessibilityHint="Ține apăsat pentru a da o comandă vocală"
-        >
-          <Ionicons 
-            name={isListening ? "mic" : "mic-outline"} 
-            size={80} 
-            color="#fff" 
-          />
-          <Text style={styles.micButtonText}>
-            {isListening ? 'Ascult...' : 'Vorbește'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Quick Actions - Row 1 */}
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handleCameraPress}
-          accessibilityLabel="Cameră pentru navigare"
-        >
-          <Ionicons name="camera" size={32} color="#fff" />
-          <Text style={styles.actionButtonText}>Cameră</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handleTimePress}
-          accessibilityLabel="Spune ora curentă"
-        >
-          <Ionicons name="time" size={32} color="#fff" />
-          <Text style={styles.actionButtonText}>Ora</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handleBatteryPress}
-          accessibilityLabel="Verifică bateria"
-        >
-          <Ionicons name="battery-half" size={32} color="#fff" />
-          <Text style={styles.actionButtonText}>Baterie</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Quick Actions - Row 2 */}
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handleContactsPress}
-          accessibilityLabel="Deschide contactele"
-        >
-          <Ionicons name="people" size={32} color="#fff" />
-          <Text style={styles.actionButtonText}>Contacte</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handleMedicationsPress}
-          accessibilityLabel="Mementouri medicamente"
-        >
-          <Ionicons name="medical" size={32} color="#fff" />
-          <Text style={styles.actionButtonText}>Medicamente</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={handleSettingsPress}
-          accessibilityLabel="Deschide setările"
-        >
-          <Ionicons name="settings" size={32} color="#fff" />
-          <Text style={styles.actionButtonText}>Setări</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Find Phone Mode */}
-      {isFindingPhone ? (
-        <TouchableOpacity
-          style={styles.findPhoneButtonActive}
-          onPress={stopFindPhone}
-          accessibilityLabel="Oprește căutarea telefonului"
-        >
-          <Ionicons name="volume-high" size={30} color="#fff" />
-          <Text style={styles.findPhoneText}>Apasă când m-ai găsit!</Text>
-        </TouchableOpacity>
-      ) : (
-        <TouchableOpacity
-          style={styles.findPhoneButton}
-          onPress={handleFindPhone}
-          accessibilityLabel="Găsește telefonul"
-        >
-          <Ionicons name="search" size={24} color="#fff" />
-          <Text style={styles.findPhoneText}>Strigă &quot;{settings.voiceName}, unde ești?&quot;</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Brand Footer */}
-      <View style={styles.footer}>
-        <Text style={styles.footerBrand}>Brend Elyn</Text>
-      </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
-    padding: 15,
-  },
-  header: {
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 10,
-  },
-  assistantAvatar: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
     backgroundColor: '#1a56db',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
   },
-  avatarLetter: {
-    fontSize: 40,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  assistantName: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  assistantSubtitle: {
-    fontSize: 14,
-    color: '#a0a0a0',
-    marginTop: 2,
-  },
-  batteryIndicator: {
-    flexDirection: 'row',
+  logoContainer: {
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 8,
-    backgroundColor: '#2d2d44',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 20,
   },
-  batteryText: {
-    color: '#22c55e',
-    fontSize: 12,
-    marginLeft: 4,
-    fontWeight: '600',
+  logoText: {
+    fontSize: 140,
+    fontWeight: 'bold',
+    color: '#1a56db',
+    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
-  batteryLow: {
-    color: '#ef4444',
+  brandContainer: {
+    marginTop: 40,
+    alignItems: 'center',
+  },
+  brandName: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: '#fff',
+    letterSpacing: 2,
+  },
+  creator: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 10,
+    fontStyle: 'italic',
   },
   statusContainer: {
-    minHeight: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  listeningIndicator: {
+    position: 'absolute',
+    bottom: 50,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2d2d44',
+    backgroundColor: 'rgba(0,0,0,0.3)',
     paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingVertical: 10,
+    borderRadius: 25,
+  },
+  statusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#666',
+    marginRight: 10,
+  },
+  statusDotActive: {
+    backgroundColor: '#22c55e',
+  },
+  statusDotProcessing: {
+    backgroundColor: '#f59e0b',
   },
   statusText: {
-    color: '#ef4444',
-    fontSize: 16,
-    marginLeft: 8,
-    fontWeight: '600',
-  },
-  responseText: {
-    color: '#a0a0a0',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingHorizontal: 20,
-  },
-  loadingText: {
-    color: '#fff',
-    fontSize: 18,
-    marginTop: 20,
-  },
-  mainActions: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginVertical: 15,
-  },
-  micButton: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: '#4f46e5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#4f46e5',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    elevation: 10,
-  },
-  micButtonActive: {
-    backgroundColor: '#ef4444',
-    shadowColor: '#ef4444',
-  },
-  micButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    marginTop: 8,
-  },
-  quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 10,
-  },
-  actionButton: {
-    width: 90,
-    height: 80,
-    borderRadius: 15,
-    backgroundColor: '#2d2d44',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  actionButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    marginTop: 4,
-    fontWeight: '500',
-  },
-  findPhoneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#2d2d44',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    marginTop: 5,
-  },
-  findPhoneButtonActive: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#22c55e',
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    marginTop: 5,
-  },
-  findPhoneText: {
     color: '#fff',
     fontSize: 14,
-    marginLeft: 10,
-    fontWeight: '500',
-  },
-  footer: {
-    alignItems: 'center',
-    marginTop: 10,
-    paddingTop: 10,
-  },
-  footerBrand: {
-    color: '#4f46e5',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 1,
   },
 });
