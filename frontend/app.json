@@ -53,7 +53,9 @@
         {
           "cameraPermission": "Detectează obstacole pentru navigare sigură"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
